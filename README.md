@@ -1,5 +1,5 @@
 # Export-TeamsCallQueueAgents.ps1
-A script export all Teams Call Queue agents and group members
+A script to export all Teams Call Queue agents and group members
 
 Example:
 ```
