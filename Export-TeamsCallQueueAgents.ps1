@@ -16,79 +16,119 @@
  
 .EXAMPLE 
     
-    .\Export-TeamsCallQueueAgents.ps1 -Path C:\Temp\Agents.csv -UserName admin@domain.com -OverrideAdminDomain domain.onmicrosoft.com
+    .\Export-TeamsCallQueueAgents.ps1 -Path C:\Temp\Agents.csv
 
-.NOTES
+.EXAMPLE 
     
-    If Call Queues have 'ConferenceMode' enabled, the script will display many warningsget-c
+    .\Export-TeamsCallQueueAgents.ps1 -Path C:\Temp\Agents.csv -OverrideAdminDomain domain.onmicrosoft.com
+    If using the 'SkypeOnlineConnector' module, the OverrideAdminDomain can be used.
 
 #>
 
 Param(
     [Parameter(mandatory=$true)][String]$Path,
-    [Parameter(mandatory=$true)][String]$UserName,
     [Parameter(mandatory=$false)][string]$OverrideAdminDomain
 )
 
-# Check for MSOnline module and install if missing
-
-if (Get-Module -ListAvailable -Name MSOnline) {
-    
-    Write-Host "`nMSOnline module is installed" -ForegroundColor Cyan
-    Import-Module MSOnline
-
-} else {
-
-    Write-Host "`nMSOnline module is not installed" -ForegroundColor Red
-    Write-Host "`nInstalling module..." -ForegroundColor Cyan
-    Install-Module MSOnline
-
-}
-
-# Check for SfBO module
+Write-Host "`nChecking if required modules are installed..."
 
 if (Get-Module -ListAvailable -Name SkypeOnlineConnector) {
     
-    Write-Host "`nSkype Online Module installed" -ForegroundColor Cyan
-    Import-Module SkypeOnlineConnector
+    Write-Host "Skype Online Module installed." -ForegroundColor Green
 
-} else {
+    # Is a session already in place and is it "Opened"?
+    if((Get-PSSession | Where-Object {$_.ComputerName -like "*.online.lync.com"}).State -ne "Opened") {
 
-    Write-Error -Message "Skype Online Module not installed, please download and install then try again."
-        
-    break
+        Write-Host "`nCreating PowerShell session..."
 
-}
-
-# Connect to MSOnline and SfBO
-
-Write-Host "`nConnecting to MSOnline and Skype Online" -ForegroundColor Cyan
-Write-Host "You may be prompted more than once to authenticate" -ForegroundColor Yellow
-Write-Host `n
-
-if((Get-PSSession | Where-Object {$_.ComputerName -like "*.online.lync.com"}).State -ne "Opened") {
-
-    if ($OverrideAdminDomain) {
-
-        $global:PSSession = New-CsOnlineSession -UserName $UserName -OverrideAdminDomain $OverrideAdminDomain
-
+        if ($OverrideAdminDomain) {
+            
+            $global:PSSession = New-CsOnlineSession -OverrideAdminDomain $OverrideAdminDomain
+            
         } else {
-
-        $global:PSSession = New-CsOnlineSession -UserName $UserName
+            
+            $global:PSSession = New-CsOnlineSession
 
         }
     
-    Import-PSSession $global:PSSession -AllowClobber | Out-Null
-    Enable-CsOnlineSessionForReconnection
-    Connect-MsolService | Out-Null
+        Import-PSSession $global:PSSession -AllowClobber | Out-Null
 
     }
+
+} else {
+
+    function TeamsConnected {
+    
+    Get-CsOnlineSipDomain -ErrorAction SilentlyContinue | Out-Null
+    $result = $?
+    return $result
+
+    }
+
+    if (-not (TeamsConnected)) {
+
+        if (Get-Module -ListAvailable -Name MicrosoftTeams) {
+    
+            # Connect to Microsoft Teams
+            Write-Host "`nTeams module installed" -ForegroundColor Green
+            Write-Host "`nCreating PowerShell session..."
+            Import-Module MicrosoftTeams
+            Import-PSSession -Session (New-CsOnlineSession) | Out-Null
+    
+        } else {
+    
+            # Install module and connect to Microsoft Teams
+            Write-Host "`nTeams module is not installed" -ForegroundColor Yellow
+            Write-Host "`nInstalling module and creating PowerShell session..."
+            Install-Module MicrosoftTeams
+            Import-PSSession -Session (New-CsOnlineSession) | Out-Null
+    
+        }
+
+    }
+
+}
+
+
+
+# Create function to check for MSOnline session
+
+function MSOLConnected {
+    
+    Get-MsolDomain -ErrorAction SilentlyContinue | Out-Null
+    $result = $?
+    return $result
+
+}
+
+# Check if connected to MSOnline
+if (-not (MSOLConnected)) {
+    
+    # Is the module installed?
+    if (Get-Module -ListAvailable -Name MSOnline) {
+    
+        Write-Host "`nMSOnline module installed" -ForegroundColor Green
+        Write-Host "`nCreating PowerShell session..."
+        Import-Module MSOnline
+        Connect-MsolService
+    
+    } else {
+        
+        #Install the module if missing
+        Write-Host "`nMSOnline module is not installed" -ForegroundColor Yellow
+        Write-Host "`nInstalling module and creating PowerShell session..."
+        Install-Module MSOnline
+        Connect-MsolService
+    
+    }
+
+}
 
 # Start script loops
 
 $Queues = @()
 $Queues = Get-CsCallQueue -WarningAction SilentlyContinue
-$CustomObject = @()
+$CallQueueUsers = @()
 
 foreach ($Queue in $Queues) {
     
@@ -114,8 +154,7 @@ foreach ($Queue in $Queues) {
             ConferenceMode = $Queue.ConferenceMode
             }
 
-        $ObjectProperties = New-Object -TypeName PSObject -Property $QueueUserProperties
-        $CustomObject += $ObjectProperties
+        $CallQueueUsers += New-Object -TypeName PSObject -Property $QueueUserProperties
 
         }
 
@@ -149,8 +188,7 @@ foreach ($Queue in $Queues) {
                     ConferenceMode = $Queue.ConferenceMode
                     }
                 
-                $ObjectProperties = New-Object -TypeName PSObject -Property $MemberProperties
-                $CustomObject += $ObjectProperties
+                $CallQueueUsers += New-Object -TypeName PSObject -Property $MemberProperties
                 
                 } else {
                 
@@ -172,8 +210,7 @@ foreach ($Queue in $Queues) {
                         ConferenceMode = $Queue.ConferenceMode
                         }
                     
-                    $ObjectProperties = New-Object -TypeName PSObject -Property $MemberProperties
-                    $CustomObject += $ObjectProperties
+                    $CallQueueUsers += New-Object -TypeName PSObject -Property $MemberProperties
                     
                     } else {
                     
@@ -189,8 +226,7 @@ foreach ($Queue in $Queues) {
                         ConferenceMode = $Queue.ConferenceMode
                         }
 
-                    $ObjectProperties = New-Object -TypeName PSObject -Property $MemberProperties
-                    $CustomObject += $ObjectProperties
+                    $CallQueueUsers += New-Object -TypeName PSObject -Property $MemberProperties
                     
                     }
 
@@ -202,7 +238,7 @@ foreach ($Queue in $Queues) {
 
     }
 
-Write-Output $CustomObject | Select-Object CallQueue,QueueAssignment,GroupName,UserDisplayName,UserSipAddress | Sort-Object -Property @{Expression="CallQueue"},@{Expression="GroupName"},@{Expression="UserDisplayName"} | Format-Table
+Write-Output $CallQueueUsers | Select-Object CallQueue,QueueAssignment,GroupName,UserDisplayName,UserSipAddress | Sort-Object -Property @{Expression="CallQueue"},@{Expression="GroupName"},@{Expression="UserDisplayName"} | Format-Table
 
 $CustomObject | Select-Object CallQueue,CallQueueId,ConferenceMode,QueueAssignment,GroupName,UserDisplayName,UserPrincipalName,UserSipAddress | Sort-Object -Property @{Expression="CallQueue"},@{Expression="GroupName"},@{Expression="UserDisplayName"} | Export-Csv -Path $Path -NoTypeInformation
 
